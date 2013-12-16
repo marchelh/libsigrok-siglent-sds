@@ -20,21 +20,18 @@
 SUBDIRS = text
 
 # Local lib, this is NOT meant to be installed!
-noinst_LTLIBRARIES = libsigrokoutput.la
+noinst_LTLIBRARIES = libsigrok4DSLogicoutput.la
 
-libsigrokoutput_la_SOURCES = \
-	binary.c \
-	vcd.c \
-	ols.c \
-	gnuplot.c \
-	chronovu_la8.c \
-	csv.c \
-	analog.c \
+libsigrok4DSLogicoutput_la_SOURCES = \
+        out_binary.c \
+        out_vcd.c \
+        out_csv.c \
+        out_analog.c \
 	output.c
 
-libsigrokoutput_la_CFLAGS = \
+libsigrok4DSLogicoutput_la_CFLAGS = \
 	-I$(top_srcdir)
 
-libsigrokoutput_la_LIBADD = \
-	text/libsigrokoutputtext.la
+libsigrok4DSLogicoutput_la_LIBADD = \
+	text/libsigrok4DSLogicoutputtext.la
 

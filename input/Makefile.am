@@ -19,15 +19,14 @@
 ##
 
 # Local lib, this is NOT meant to be installed!
-noinst_LTLIBRARIES = libsigrokinput.la
+noinst_LTLIBRARIES = libsigrok4DSLogicinput.la
 
-libsigrokinput_la_SOURCES = \
-	binary.c \
-	chronovu_la8.c \
-	input.c \
-	vcd.c \
-	wav.c
+libsigrok4DSLogicinput_la_SOURCES = \
+        in_binary.c \
+        in_vcd.c \
+        in_wav.c \
+	input.c 
 
-libsigrokinput_la_CFLAGS = \
+libsigrok4DSLogicinput_la_CFLAGS = \
 	-I$(top_srcdir)
 

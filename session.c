@@ -85,7 +85,7 @@ SR_API struct sr_session *sr_session_new(void)
 
 	session->source_timeout = -1;
 	session->abort_session = FALSE;
-	g_mutex_init(&session->stop_mutex);
+//	g_mutex_init(&session->stop_mutex);
 
 	return session;
 }
@@ -106,9 +106,21 @@ SR_API int sr_session_destroy(void)
 
 	sr_session_dev_remove_all();
 
+    sr_session_datafeed_callback_remove_all();
+
+    if (session->sources) {
+        g_free(session->sources);
+        session->sources = NULL;
+    }
+
+    if (session->pollfds) {
+        g_free(session->pollfds);
+        session->pollfds = NULL;
+    }
+
 	/* TODO: Error checks needed? */
 
-	g_mutex_clear(&session->stop_mutex);
+//	g_mutex_clear(&session->stop_mutex);
 
 	g_free(session);
 	session = NULL;
@@ -259,13 +271,13 @@ static int sr_session_run_poll(void)
 			 * we check the flag after processing every source, not
 			 * just once per main event loop.
 			 */
-			g_mutex_lock(&session->stop_mutex);
+//			g_mutex_lock(&session->stop_mutex);
 			if (session->abort_session) {
 				sr_session_stop_sync();
 				/* But once is enough. */
 				session->abort_session = FALSE;
 			}
-			g_mutex_unlock(&session->stop_mutex);
+//			g_mutex_unlock(&session->stop_mutex);
 		}
 	}
 
@@ -376,7 +388,7 @@ SR_PRIV int sr_session_stop_sync(void)
 		sdi = l->data;
 		if (sdi->driver) {
 			if (sdi->driver->dev_acquisition_stop)
-				sdi->driver->dev_acquisition_stop(sdi, sdi);
+                sdi->driver->dev_acquisition_stop(sdi, NULL);
 		}
 	}
 
@@ -403,9 +415,9 @@ SR_API int sr_session_stop(void)
 		return SR_ERR_BUG;
 	}
 
-	g_mutex_lock(&session->stop_mutex);
+//	g_mutex_lock(&session->stop_mutex);
 	session->abort_session = TRUE;
-	g_mutex_unlock(&session->stop_mutex);
+//	g_mutex_unlock(&session->stop_mutex);
 
 	return SR_OK;
 }
@@ -506,7 +518,7 @@ SR_PRIV int sr_session_send(const struct sr_dev_inst *sdi,
  *         SR_ERR_MALLOC upon memory allocation errors.
  */
 static int _sr_session_source_add(GPollFD *pollfd, int timeout,
-	sr_receive_data_callback_t cb, void *cb_data, gintptr poll_object)
+    sr_receive_data_callback_t cb, const struct sr_dev_inst *sdi, gintptr poll_object)
 {
 	struct source *new_sources, *s;
 	GPollFD *new_pollfds;
@@ -536,7 +548,7 @@ static int _sr_session_source_add(GPollFD *pollfd, int timeout,
 	s = &new_sources[session->num_sources++];
 	s->timeout = timeout;
 	s->cb = cb;
-	s->cb_data = cb_data;
+	s->cb_data = sdi;
 	s->poll_object = poll_object;
 	session->pollfds = new_pollfds;
 	session->sources = new_sources;
@@ -561,14 +573,14 @@ static int _sr_session_source_add(GPollFD *pollfd, int timeout,
  *         SR_ERR_MALLOC upon memory allocation errors.
  */
 SR_API int sr_session_source_add(int fd, int events, int timeout,
-		sr_receive_data_callback_t cb, void *cb_data)
+		sr_receive_data_callback_t cb, const struct sr_dev_inst *sdi)
 {
 	GPollFD p;
 
 	p.fd = fd;
 	p.events = events;
 
-	return _sr_session_source_add(&p, timeout, cb, cb_data, (gintptr)fd);
+    return _sr_session_source_add(&p, timeout, cb, sdi, (gintptr)fd);
 }
 
 /**
@@ -583,10 +595,10 @@ SR_API int sr_session_source_add(int fd, int events, int timeout,
  *         SR_ERR_MALLOC upon memory allocation errors.
  */
 SR_API int sr_session_source_add_pollfd(GPollFD *pollfd, int timeout,
-		sr_receive_data_callback_t cb, void *cb_data)
+		sr_receive_data_callback_t cb, const struct sr_dev_inst *sdi)
 {
-	return _sr_session_source_add(pollfd, timeout, cb,
-				      cb_data, (gintptr)pollfd);
+    return _sr_session_source_add(pollfd, timeout, cb,
+                      sdi, (gintptr)pollfd);
 }
 
 /**
@@ -602,7 +614,7 @@ SR_API int sr_session_source_add_pollfd(GPollFD *pollfd, int timeout,
  *         SR_ERR_MALLOC upon memory allocation errors.
  */
 SR_API int sr_session_source_add_channel(GIOChannel *channel, int events,
-		int timeout, sr_receive_data_callback_t cb, void *cb_data)
+		int timeout, sr_receive_data_callback_t cb, const struct sr_dev_inst *sdi)
 {
 	GPollFD p;
 
@@ -613,7 +625,7 @@ SR_API int sr_session_source_add_channel(GIOChannel *channel, int events,
 	p.events = events;
 #endif
 
-	return _sr_session_source_add(&p, timeout, cb, cb_data, (gintptr)channel);
+    return _sr_session_source_add(&p, timeout, cb, sdi, (gintptr)channel);
 }
 
 /**

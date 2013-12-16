@@ -26,6 +26,14 @@
 #include <inttypes.h>
 #include <glib.h>
 
+#ifdef WIN32
+#define WINVER 0x0500
+#define _WIN32_WINNT WINVER
+#include <Winsock2.h>
+#else
+#include <sys/time.h>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -80,6 +88,10 @@ enum {
 };
 
 #define SR_MAX_PROBENAME_LEN 32
+#define DS_MAX_ANALOG_PROBES_NUM 8
+#define TriggerStages 16
+#define TriggerProbes 16
+#define TriggerCountBits 16
 
 /* Handy little macros */
 #define SR_HZ(n)  (n)
@@ -129,7 +141,7 @@ enum {
 #define SR_PRIV
 #endif
 
-typedef int (*sr_receive_data_callback_t)(int fd, int revents, void *cb_data);
+typedef int (*sr_receive_data_callback_t)(int fd, int revents, const struct sr_dev_inst *sdi);
 
 /** Data types used by sr_config_info(). */
 enum {
@@ -280,7 +292,12 @@ struct sr_datafeed_meta {
 struct sr_datafeed_logic {
 	uint64_t length;
 	uint16_t unitsize;
+    uint16_t data_error;
 	void *data;
+};
+
+struct sr_datafeed_trigger {
+
 };
 
 struct sr_datafeed_analog {
@@ -533,6 +550,16 @@ enum {
 	SR_PROBE_ANALOG,
 };
 
+enum {
+    LOGIC = 0,
+    ANALOG = 1,
+};
+
+static const char *mode_strings[] = {
+    "Logic Analyzer",
+    "Oscilloscope",
+};
+
 struct sr_probe {
 	/* The index field will go: use g_slist_length(sdi->probes) instead. */
 	int index;
@@ -622,6 +649,9 @@ enum {
 	/** The device supports setting a pre/post-trigger capture ratio. */
 	SR_CONF_CAPTURE_RATIO,
 
+    /** */
+    SR_CONF_DEVICE_MODE,
+
 	/** The device supports setting a pattern (pattern generator mode). */
 	SR_CONF_PATTERN_MODE,
 
@@ -664,6 +694,9 @@ enum {
 	/** Number of vertical divisions, as related to SR_CONF_VDIV.  */
 	SR_CONF_NUM_VDIV,
 
+    /** clock type (internal/external) */
+    SR_CONF_CLOCK_TYPE,
+
 	/*--- Special stuff -------------------------------------------------*/
 
 	/** Scan options supported by the driver. */
@@ -671,6 +704,7 @@ enum {
 
 	/** Device options for a particular device. */
 	SR_CONF_DEVICE_OPTIONS,
+    SR_CONF_DEVICE_CONFIGS,
 
 	/** Session filename. */
 	SR_CONF_SESSIONFILE,
@@ -721,6 +755,7 @@ struct sr_dev_inst {
 	int index;
 	int status;
 	int inst_type;
+    int mode;
 	char *vendor;
 	char *model;
 	char *version;
@@ -771,6 +806,7 @@ struct sr_dev_driver {
 	/* Device-specific */
 	int (*dev_open) (struct sr_dev_inst *sdi);
 	int (*dev_close) (struct sr_dev_inst *sdi);
+    int (*dev_test) (struct sr_dev_inst *sdi);
 	int (*dev_acquisition_start) (const struct sr_dev_inst *sdi,
 			void *cb_data);
 	int (*dev_acquisition_stop) (struct sr_dev_inst *sdi,
@@ -804,8 +840,68 @@ struct sr_session {
 	 * an async fashion. We need to make sure the session is stopped from
 	 * within the session thread itself.
 	 */
-	GMutex stop_mutex;
+//	GMutex stop_mutex;
 	gboolean abort_session;
+};
+
+enum {
+    SIMPLE_TRIGGER = 0,
+    ADV_TRIGGER,
+};
+
+struct ds_trigger {
+    uint16_t trigger_en;
+    uint16_t trigger_mode;
+    uint16_t trigger_pos;
+    uint16_t trigger_stages;
+    unsigned char trigger_logic[TriggerStages+1];
+    unsigned char trigger0_inv[TriggerStages+1];
+    unsigned char trigger1_inv[TriggerStages+1];
+    char trigger0[TriggerStages+1][TriggerProbes];
+    char trigger1[TriggerStages+1][TriggerProbes];
+    uint16_t trigger0_count[TriggerStages+1];
+    uint16_t trigger1_count[TriggerStages+1];
+};
+
+struct ds_trigger_pos {
+    uint32_t real_pos;
+    uint32_t ram_saddr;
+    unsigned char first_block[504];
+};
+
+//struct libusbhp_t;
+typedef void (*libusbhp_hotplug_cb_fn)(struct libusbhp_device_t *device,
+                                     void *user_data);
+#ifdef __linux__
+#include <libudev.h>
+
+struct dev_list_t {
+  char *path;
+  unsigned short vid;
+  unsigned short pid;
+  struct dev_list_t *next;
+};
+#endif/*__linux__*/
+
+struct libusbhp_t {
+#ifdef __linux__
+  struct udev* hotplug;
+  struct udev_monitor* hotplug_monitor;
+  struct dev_list_t *devlist;
+#endif/*__linux__*/
+#ifdef _WIN32
+  HWND hwnd;
+  HDEVNOTIFY hDeviceNotify;
+  WNDCLASSEX wcex;
+#endif/*_WIN32*/
+  libusbhp_hotplug_cb_fn attach;
+  libusbhp_hotplug_cb_fn detach;
+  void *user_data;
+};
+
+struct libusbhp_device_t {
+    unsigned short idVendor;
+    unsigned short idProduct;
 };
 
 #include "proto.h"

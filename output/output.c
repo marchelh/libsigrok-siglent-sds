@@ -54,9 +54,7 @@ extern SR_PRIV struct sr_output_format output_text_hex;
 extern SR_PRIV struct sr_output_format output_text_ascii;
 extern SR_PRIV struct sr_output_format output_binary;
 extern SR_PRIV struct sr_output_format output_vcd;
-extern SR_PRIV struct sr_output_format output_ols;
-extern SR_PRIV struct sr_output_format output_gnuplot;
-extern SR_PRIV struct sr_output_format output_chronovu_la8;
+
 extern SR_PRIV struct sr_output_format output_csv;
 extern SR_PRIV struct sr_output_format output_analog;
 /* extern SR_PRIV struct sr_output_format output_analog_gnuplot; */
@@ -68,9 +66,6 @@ static struct sr_output_format *output_module_list[] = {
 	&output_text_ascii,
 	&output_binary,
 	&output_vcd,
-	&output_ols,
-	&output_gnuplot,
-	&output_chronovu_la8,
 	&output_csv,
 	&output_analog,
 	/* &output_analog_gnuplot, */

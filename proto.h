@@ -103,11 +103,11 @@ SR_API int sr_session_stop(void);
 SR_API int sr_session_save(const char *filename, const struct sr_dev_inst *sdi,
 		unsigned char *buf, int unitsize, int units);
 SR_API int sr_session_source_add(int fd, int events, int timeout,
-		sr_receive_data_callback_t cb, void *cb_data);
+		sr_receive_data_callback_t cb, const struct sr_dev_inst *sdi);
 SR_API int sr_session_source_add_pollfd(GPollFD *pollfd, int timeout,
-		sr_receive_data_callback_t cb, void *cb_data);
+		sr_receive_data_callback_t cb, const struct sr_dev_inst *sdi);
 SR_API int sr_session_source_add_channel(GIOChannel *channel, int events,
-		int timeout, sr_receive_data_callback_t cb, void *cb_data);
+		int timeout, sr_receive_data_callback_t cb, const struct sr_dev_inst *sdi);
 SR_API int sr_session_source_remove(int fd);
 SR_API int sr_session_source_remove_pollfd(GPollFD *pollfd);
 SR_API int sr_session_source_remove_channel(GIOChannel *channel);
@@ -150,5 +150,30 @@ SR_API const char *sr_lib_version_string_get(void);
 
 SR_API const char *sr_strerror(int error_code);
 SR_API const char *sr_strerror_name(int error_code);
+
+/*--- libusbhp.c ------------------------------------------------------------*/
+SR_API int libusbhp_init(struct libusbhp_t **handle);
+
+SR_API void libusbhp_exit(struct libusbhp_t *handle);
+
+SR_API int libusbhp_handle_events_timeout(struct libusbhp_t *handle, struct timeval *tv);
+
+SR_API void libusbhp_register_hotplug_listeners(struct libusbhp_t *handle,
+                                        libusbhp_hotplug_cb_fn connected_cb,
+                                        libusbhp_hotplug_cb_fn disconnected_cb,
+                                        void *user_data);
+
+/*--- trigger.c ------------------------------------------------------------*/
+SR_API int ds_trigger_init(void);
+SR_API int ds_trigger_destroy(void);
+SR_API int ds_trigger_stage_set_value(uint16_t stage, uint16_t probes, char *trigger0, char *trigger1);
+SR_API int ds_trigger_stage_set_logic(uint16_t stage, uint16_t probes, unsigned char trigger_logic);
+SR_API int ds_trigger_stage_set_inv(uint16_t stage, uint16_t probes, unsigned char trigger0_inv, unsigned char trigger1_inv);
+SR_API int ds_trigger_stage_set_count(uint16_t stage, uint16_t probes, uint16_t trigger0_count, uint16_t trigger1_count);
+SR_API int ds_trigger_probe_set(uint16_t probe, unsigned char trigger0, unsigned char trigger1);
+SR_API int ds_trigger_set_stage(uint16_t stages);
+SR_API int ds_trigger_set_pos(uint16_t position);
+SR_API int ds_trigger_set_en(uint16_t enable);
+SR_API int ds_trigger_set_mode(uint16_t mode);
 
 #endif

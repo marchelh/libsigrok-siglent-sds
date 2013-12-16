@@ -47,6 +47,7 @@ struct session_vdev {
 	struct zip_file *capfile;
 	int bytes_read;
 	uint64_t samplerate;
+    uint64_t total_samples;
 	int unitsize;
 	int num_probes;
 };
@@ -58,7 +59,7 @@ static const int hwcaps[] = {
 	0,
 };
 
-static int receive_data(int fd, int revents, void *cb_data)
+static int receive_data(int fd, int revents, const struct sr_dev_inst *cb_sdi)
 {
 	struct sr_dev_inst *sdi;
 	struct session_vdev *vdev;
@@ -95,7 +96,7 @@ static int receive_data(int fd, int revents, void *cb_data)
 			logic.unitsize = vdev->unitsize;
 			logic.data = buf;
 			vdev->bytes_read += ret;
-			sr_session_send(cb_data, &packet);
+			sr_session_send(cb_sdi, &packet);
 		} else {
 			/* done with this capture file */
 			zip_fclose(vdev->capfile);
@@ -107,7 +108,7 @@ static int receive_data(int fd, int revents, void *cb_data)
 
 	if (!got_data) {
 		packet.type = SR_DF_END;
-		sr_session_send(cb_data, &packet);
+		sr_session_send(cb_sdi, &packet);
 		sr_session_source_remove(-1);
 	}
 
@@ -160,6 +161,13 @@ static int config_get(int id, GVariant **data, const struct sr_dev_inst *sdi)
 		} else
 			return SR_ERR;
 		break;
+    case SR_CONF_LIMIT_SAMPLES:
+        if (sdi) {
+            vdev = sdi->priv;
+            *data = g_variant_new_uint64(vdev->total_samples);
+        } else
+            return SR_ERR;
+        break;
 	default:
 		return SR_ERR_ARG;
 	}
@@ -189,6 +197,9 @@ static int config_set(int id, GVariant *data, const struct sr_dev_inst *sdi)
 	case SR_CONF_CAPTURE_UNITSIZE:
 		vdev->unitsize = g_variant_get_uint64(data);
 		break;
+    case SR_CONF_LIMIT_SAMPLES:
+        vdev->total_samples = g_variant_get_uint64(data);
+        break;
 	case SR_CONF_CAPTURE_NUM_PROBES:
 		vdev->num_probes = g_variant_get_uint64(data);
 		break;
@@ -207,8 +218,10 @@ static int config_list(int key, GVariant **data, const struct sr_dev_inst *sdi)
 
 	switch (key) {
 	case SR_CONF_DEVICE_OPTIONS:
-		*data = g_variant_new_fixed_array(G_VARIANT_TYPE_INT32,
-				hwcaps, ARRAY_SIZE(hwcaps), sizeof(int32_t));
+//		*data = g_variant_new_fixed_array(G_VARIANT_TYPE_INT32,
+//				hwcaps, ARRAY_SIZE(hwcaps), sizeof(int32_t));
+		*data = g_variant_new_from_data(G_VARIANT_TYPE("ai"),
+				hwcaps, ARRAY_SIZE(hwcaps)*sizeof(int32_t), TRUE, NULL, NULL);
 		break;
 	default:
 		return SR_ERR_ARG;
@@ -248,10 +261,10 @@ static int hw_dev_acquisition_start(const struct sr_dev_inst *sdi,
 	}
 
 	/* Send header packet to the session bus. */
-	std_session_send_df_header(cb_data, LOG_PREFIX);
+    std_session_send_df_header(sdi, LOG_PREFIX);
 
 	/* freewheeling source */
-	sr_session_source_add(-1, 0, 0, receive_data, cb_data);
+    sr_session_source_add(-1, 0, 0, receive_data, sdi);
 
 	return SR_OK;
 }

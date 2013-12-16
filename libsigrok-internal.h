@@ -84,11 +84,12 @@ SR_PRIV int sr_err(const char *format, ...);
 /*--- device.c --------------------------------------------------------------*/
 
 SR_PRIV struct sr_probe *sr_probe_new(int index, int type,
-		gboolean enabled, const char *name);
+                                      gboolean enabled, const char *name);
+SR_PRIV void sr_dev_probes_free(struct sr_dev_inst *sdi);
 
 /* Generic device instances */
-SR_PRIV struct sr_dev_inst *sr_dev_inst_new(int index, int status,
-		const char *vendor, const char *model, const char *version);
+SR_PRIV struct sr_dev_inst *sr_dev_inst_new(int mode, int index, int status,
+                                            const char *vendor, const char *model, const char *version);
 SR_PRIV void sr_dev_inst_free(struct sr_dev_inst *sdi);
 
 #ifdef HAVE_LIBUSB_1_0
@@ -112,7 +113,7 @@ SR_PRIV struct sr_config *sr_config_new(int key, GVariant *data);
 SR_PRIV void sr_config_free(struct sr_config *src);
 SR_PRIV int sr_source_remove(int fd);
 SR_PRIV int sr_source_add(int fd, int events, int timeout,
-		sr_receive_data_callback_t cb, void *cb_data);
+        sr_receive_data_callback_t cb, void *cb_data);
 
 /*--- session.c -------------------------------------------------------------*/
 
@@ -134,6 +135,14 @@ SR_PRIV int std_session_send_df_header(const struct sr_dev_inst *sdi,
 		const char *prefix);
 SR_PRIV int std_dev_clear(const struct sr_dev_driver *driver,
 		std_dev_clear_t clear_private);
+
+/*--- trigger.c -------------------------------------------------*/
+SR_PRIV uint64_t sr_trigger_get_mask0(uint16_t stage);
+SR_PRIV uint64_t sr_trigger_get_mask1(uint16_t stage);
+SR_PRIV uint64_t sr_trigger_get_value0(uint16_t stage);
+SR_PRIV uint64_t sr_trigger_get_value1(uint16_t stage);
+SR_PRIV uint64_t sr_trigger_get_edge0(uint16_t stage);
+SR_PRIV uint64_t sr_trigger_get_edge1(uint16_t stage);
 
 /*--- hardware/common/serial.c ----------------------------------------------*/
 
@@ -180,84 +189,6 @@ SR_PRIV GSList *sr_usb_find(libusb_context *usb_ctx, const char *conn);
 SR_PRIV int sr_usb_open(libusb_context *usb_ctx, struct sr_usb_dev_inst *usb);
 #endif
 
-/*--- hardware/common/dmm/es51922.c -----------------------------------------*/
 
-#define ES51922_PACKET_SIZE 14
-
-struct es51922_info {
-	gboolean is_judge, is_vbar, is_voltage, is_auto, is_micro, is_current;
-	gboolean is_milli, is_resistance, is_continuity, is_diode, is_lpf;
-	gboolean is_frequency, is_duty_cycle, is_capacitance, is_temperature;
-	gboolean is_celsius, is_fahrenheit, is_adp, is_sign, is_batt, is_ol;
-	gboolean is_max, is_min, is_rel, is_rmr, is_ul, is_pmax, is_pmin;
-	gboolean is_dc, is_ac, is_vahz, is_hold, is_nano, is_kilo, is_mega;
-};
-
-SR_PRIV gboolean sr_es51922_packet_valid(const uint8_t *buf);
-SR_PRIV int sr_es51922_parse(const uint8_t *buf, float *floatval,
-			     struct sr_datafeed_analog *analog, void *info);
-
-/*--- hardware/common/dmm/fs9922.c ------------------------------------------*/
-
-#define FS9922_PACKET_SIZE 14
-
-struct fs9922_info {
-	gboolean is_auto, is_dc, is_ac, is_rel, is_hold, is_bpn, is_z1, is_z2;
-	gboolean is_max, is_min, is_apo, is_bat, is_nano, is_z3, is_micro;
-	gboolean is_milli, is_kilo, is_mega, is_beep, is_diode, is_percent;
-	gboolean is_z4, is_volt, is_ampere, is_ohm, is_hfe, is_hertz, is_farad;
-	gboolean is_celsius, is_fahrenheit;
-	int bargraph_sign, bargraph_value;
-};
-
-SR_PRIV gboolean sr_fs9922_packet_valid(const uint8_t *buf);
-SR_PRIV int sr_fs9922_parse(const uint8_t *buf, float *floatval,
-			    struct sr_datafeed_analog *analog, void *info);
-
-/*--- hardware/common/dmm/fs9721.c ------------------------------------------*/
-
-#define FS9721_PACKET_SIZE 14
-
-struct fs9721_info {
-	gboolean is_ac, is_dc, is_auto, is_rs232, is_micro, is_nano, is_kilo;
-	gboolean is_diode, is_milli, is_percent, is_mega, is_beep, is_farad;
-	gboolean is_ohm, is_rel, is_hold, is_ampere, is_volt, is_hz, is_bat;
-	gboolean is_c2c1_11, is_c2c1_10, is_c2c1_01, is_c2c1_00, is_sign;
-};
-
-SR_PRIV gboolean sr_fs9721_packet_valid(const uint8_t *buf);
-SR_PRIV int sr_fs9721_parse(const uint8_t *buf, float *floatval,
-			    struct sr_datafeed_analog *analog, void *info);
-SR_PRIV void sr_fs9721_00_temp_c(struct sr_datafeed_analog *analog, void *info);
-SR_PRIV void sr_fs9721_01_temp_c(struct sr_datafeed_analog *analog, void *info);
-SR_PRIV void sr_fs9721_10_temp_c(struct sr_datafeed_analog *analog, void *info);
-SR_PRIV void sr_fs9721_01_10_temp_f_c(struct sr_datafeed_analog *analog, void *info);
-
-/*--- hardware/common/dmm/metex14.c -----------------------------------------*/
-
-#define METEX14_PACKET_SIZE 14
-
-struct metex14_info {
-	gboolean is_ac, is_dc, is_resistance, is_capacity, is_temperature;
-	gboolean is_diode, is_frequency, is_ampere, is_volt, is_farad;
-	gboolean is_hertz, is_ohm, is_celsius, is_nano, is_micro, is_milli;
-	gboolean is_kilo, is_mega, is_gain, is_decibel, is_hfe, is_unitless;
-};
-
-SR_PRIV int sr_metex14_packet_request(struct sr_serial_dev_inst *serial);
-SR_PRIV gboolean sr_metex14_packet_valid(const uint8_t *buf);
-SR_PRIV int sr_metex14_parse(const uint8_t *buf, float *floatval,
-			     struct sr_datafeed_analog *analog, void *info);
-
-/*--- hardware/common/dmm/rs9lcd.c ------------------------------------------*/
-
-#define RS9LCD_PACKET_SIZE 9
-
-/* Dummy info struct. The parser does not use it. */
-struct rs9lcd_info { int dummy; };
-
-SR_PRIV gboolean sr_rs9lcd_packet_valid(const uint8_t *buf);
-SR_PRIV int sr_rs9lcd_parse(const uint8_t *buf, float *floatval,
-			    struct sr_datafeed_analog *analog, void *info);
 
 #endif

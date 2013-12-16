@@ -17,15 +17,15 @@
 ## along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ##
 
-if LA_DEMO
+if HW_DEMO
 
 # Local lib, this is NOT meant to be installed!
-noinst_LTLIBRARIES = libsigrokhwdemo.la
+noinst_LTLIBRARIES = libsigrok4DSLogic_hw_demo.la
 
-libsigrokhwdemo_la_SOURCES = \
+libsigrok4DSLogic_hw_demo_la_SOURCES = \
 	demo.c
 
-libsigrokhwdemo_la_CFLAGS = \
+libsigrok4DSLogic_hw_demo_la_CFLAGS = \
 	-I$(top_srcdir)
 
 endif

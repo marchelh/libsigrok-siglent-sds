@@ -84,27 +84,9 @@ SR_API int sr_session_load(const char *filename)
 		return SR_ERR;
 	}
 
-	/* check "version" */
-	version = 0;
-	if (!(zf = zip_fopen(archive, "version", 0))) {
-		sr_dbg("Not a sigrok session file.");
-		return SR_ERR;
-	}
-	if ((ret = zip_fread(zf, s, 10)) == -1) {
-		sr_dbg("Not a valid sigrok session file.");
-		return SR_ERR;
-	}
-	zip_fclose(zf);
-	s[ret] = 0;
-	version = strtoull(s, NULL, 10);
-	if (version != 1) {
-		sr_dbg("Not a valid sigrok session file version.");
-		return SR_ERR;
-	}
-
 	/* read "metadata" */
-	if (zip_stat(archive, "metadata", 0, &zs) == -1) {
-		sr_dbg("Not a valid sigrok session file.");
+    if (zip_stat(archive, "header", 0, &zs) == -1) {
+        sr_dbg("Not a valid DSLogic session file.");
 		return SR_ERR;
 	}
 
@@ -129,10 +111,10 @@ SR_API int sr_session_load(const char *filename)
 	capturefiles = g_ptr_array_new_with_free_func(g_free);
 	sections = g_key_file_get_groups(kf, NULL);
 	for (i = 0; sections[i]; i++) {
-		if (!strcmp(sections[i], "global"))
+        if (!strcmp(sections[i], "version"))
 			/* nothing really interesting in here yet */
 			continue;
-		if (!strncmp(sections[i], "device ", 7)) {
+        if (!strncmp(sections[i], "header", 6)) {
 			/* device section */
 			sdi = NULL;
 			enabled_probes = total_probes = 0;
@@ -140,7 +122,7 @@ SR_API int sr_session_load(const char *filename)
 			for (j = 0; keys[j]; j++) {
 				val = g_key_file_get_string(kf, sections[i], keys[j], NULL);
 				if (!strcmp(keys[j], "capturefile")) {
-					sdi = sr_dev_inst_new(devcnt, SR_ST_ACTIVE, NULL, NULL, NULL);
+                    sdi = sr_dev_inst_new(LOGIC, devcnt, SR_ST_ACTIVE, NULL, NULL, NULL);
 					sdi->driver = &session_driver;
 					if (devcnt == 0)
 						/* first device, init the driver */
@@ -160,6 +142,10 @@ SR_API int sr_session_load(const char *filename)
 					tmp_u64 = strtoull(val, NULL, 10);
 					sdi->driver->config_set(SR_CONF_CAPTURE_UNITSIZE,
 							g_variant_new_uint64(tmp_u64), sdi);
+                } else if (!strcmp(keys[j], "total samples")) {
+                    tmp_u64 = strtoull(val, NULL, 10);
+                    sdi->driver->config_set(SR_CONF_LIMIT_SAMPLES,
+                            g_variant_new_uint64(tmp_u64), sdi);
 				} else if (!strcmp(keys[j], "total probes")) {
 					total_probes = strtoull(val, NULL, 10);
 					sdi->driver->config_set(SR_CONF_CAPTURE_NUM_PROBES,
@@ -213,15 +199,15 @@ SR_API int sr_session_load(const char *filename)
 SR_API int sr_session_save(const char *filename, const struct sr_dev_inst *sdi,
 		unsigned char *buf, int unitsize, int units)
 {
-	GSList *l;
-	GVariant *gvar;
-	FILE *meta;
-	struct sr_probe *probe;
-	struct zip *zipfile;
-	struct zip_source *versrc, *metasrc, *logicsrc;
-	int tmpfile, ret, probecnt;
-	uint64_t samplerate;
-	char version[1], rawname[16], metafile[32], *s;
+    GSList *l;
+    GVariant *gvar;
+    FILE *meta;
+    struct sr_probe *probe;
+    struct zip *zipfile;
+    struct zip_source *versrc, *metasrc, *logicsrc;
+    int tmpfile, ret, probecnt;
+    uint64_t samplerate;
+    char rawname[16], metafile[32], *s;
 
 	if (!filename) {
 		sr_err("%s: filename was NULL", __func__);
@@ -233,77 +219,68 @@ SR_API int sr_session_save(const char *filename, const struct sr_dev_inst *sdi,
 	if (!(zipfile = zip_open(filename, ZIP_CREATE, &ret)))
 		return SR_ERR;
 
-	/* "version" */
-	version[0] = '1';
-	if (!(versrc = zip_source_buffer(zipfile, version, 1, 0)))
-		return SR_ERR;
-	if (zip_add(zipfile, "version", versrc) == -1) {
-		sr_info("error saving version into zipfile: %s",
-			zip_strerror(zipfile));
-		return SR_ERR;
-	}
+    /* init "metadata" */
+    strcpy(metafile, "DSLogic-meta-XXXXXX");
+    if ((tmpfile = g_mkstemp(metafile)) == -1)
+        return SR_ERR;
+    close(tmpfile);
+    meta = g_fopen(metafile, "wb");
+    fprintf(meta, "[version]\n");
+    fprintf(meta, "DSLogic version = %s\n", PACKAGE_VERSION);
 
-	/* init "metadata" */
-	strcpy(metafile, "sigrok-meta-XXXXXX");
-	if ((tmpfile = g_mkstemp(metafile)) == -1)
-		return SR_ERR;
-	close(tmpfile);
-	meta = g_fopen(metafile, "wb");
-	fprintf(meta, "[global]\n");
-	fprintf(meta, "sigrok version = %s\n", PACKAGE_VERSION);
+    /* metadata */
+    fprintf(meta, "[header]\n");
+    if (sdi->driver)
+        fprintf(meta, "driver = %s\n", sdi->driver->name);
 
-	/* metadata */
-	fprintf(meta, "[device 1]\n");
-	if (sdi->driver)
-		fprintf(meta, "driver = %s\n", sdi->driver->name);
+    /* metadata */
+    fprintf(meta, "capturefile = data\n");
+    fprintf(meta, "unitsize = %d\n", unitsize);
+    fprintf(meta, "total samples = %d\n", units);
+    fprintf(meta, "total probes = %d\n", g_slist_length(sdi->probes));
+    if (sr_dev_has_option(sdi, SR_CONF_SAMPLERATE)) {
+        if (sr_config_get(sdi->driver, SR_CONF_SAMPLERATE,
+                &gvar, sdi) == SR_OK) {
+            samplerate = g_variant_get_uint64(gvar);
+            s = sr_samplerate_string(samplerate);
+            fprintf(meta, "samplerate = %s\n", s);
+            g_free(s);
+            g_variant_unref(gvar);
+        }
+    }
+    probecnt = 1;
+    for (l = sdi->probes; l; l = l->next) {
+        probe = l->data;
+        if (probe->enabled) {
+            if (probe->name)
+                fprintf(meta, "probe%d = %s\n", probecnt, probe->name);
+            if (probe->trigger)
+                fprintf(meta, " trigger%d = %s\n", probecnt, probe->trigger);
+            probecnt++;
+        }
+    }
 
-	/* metadata */
-	fprintf(meta, "capturefile = logic-1\n");
-	fprintf(meta, "unitsize = %d\n", unitsize);
-	fprintf(meta, "total probes = %d\n", g_slist_length(sdi->probes));
-	if (sr_dev_has_option(sdi, SR_CONF_SAMPLERATE)) {
-		if (sr_config_get(sdi->driver, SR_CONF_SAMPLERATE,
-				&gvar, sdi) == SR_OK) {
-			samplerate = g_variant_get_uint64(gvar);
-			s = sr_samplerate_string(samplerate);
-			fprintf(meta, "samplerate = %s\n", s);
-			g_free(s);
-			g_variant_unref(gvar);
-		}
-	}
-	probecnt = 1;
-	for (l = sdi->probes; l; l = l->next) {
-		probe = l->data;
-		if (probe->enabled) {
-			if (probe->name)
-				fprintf(meta, "probe%d = %s\n", probecnt, probe->name);
-			if (probe->trigger)
-				fprintf(meta, " trigger%d = %s\n", probecnt, probe->trigger);
-			probecnt++;
-		}
-	}
+    if (!(logicsrc = zip_source_buffer(zipfile, buf,
+               units * unitsize, FALSE)))
+        return SR_ERR;
+    snprintf(rawname, 15, "data");
+    if (zip_add(zipfile, rawname, logicsrc) == -1)
+        return SR_ERR;
+    fclose(meta);
 
-	if (!(logicsrc = zip_source_buffer(zipfile, buf,
-			   units * unitsize, FALSE)))
-		return SR_ERR;
-	snprintf(rawname, 15, "logic-1");
-	if (zip_add(zipfile, rawname, logicsrc) == -1)
-		return SR_ERR;
-	fclose(meta);
+    if (!(metasrc = zip_source_file(zipfile, metafile, 0, -1)))
+        return SR_ERR;
+    if (zip_add(zipfile, "header", metasrc) == -1)
+        return SR_ERR;
 
-	if (!(metasrc = zip_source_file(zipfile, metafile, 0, -1)))
-		return SR_ERR;
-	if (zip_add(zipfile, "metadata", metasrc) == -1)
-		return SR_ERR;
+    if ((ret = zip_close(zipfile)) == -1) {
+        sr_info("error saving zipfile: %s", zip_strerror(zipfile));
+        return SR_ERR;
+    }
 
-	if ((ret = zip_close(zipfile)) == -1) {
-		sr_info("error saving zipfile: %s", zip_strerror(zipfile));
-		return SR_ERR;
-	}
+    unlink(metafile);
 
-	unlink(metafile);
-
-	return SR_OK;
+    return SR_OK;
 }
 
 /** @} */
