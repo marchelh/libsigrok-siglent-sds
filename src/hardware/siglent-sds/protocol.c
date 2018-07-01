@@ -216,7 +216,6 @@ SR_PRIV int siglent_sds_channel_start(const struct sr_dev_inst *sdi)
 {
 	struct dev_context *devc;
 	struct sr_channel *ch;
-	const char *s;
 
 	if (!(devc = sdi->priv))
 		return SR_ERR;
@@ -225,10 +224,22 @@ SR_PRIV int siglent_sds_channel_start(const struct sr_dev_inst *sdi)
 
 	sr_dbg("Starting reading data from channel %d.", ch->index + 1);
 
-	s = (ch->type == SR_CHANNEL_LOGIC) ? "D%d:WF?" : "C%d:WF? ALL";
-	if (sr_scpi_send(sdi->conn, s, ch->index + 1) != SR_OK)
-		return SR_ERR;
-	siglent_sds_set_wait_event(devc, WAIT_NONE);
+	switch (devc->model->series->protocol) {
+	case NON_SPO_MODEL:
+	case SPO_MODEL:
+
+		if (ch->type == SR_CHANNEL_LOGIC) {
+			if (sr_scpi_send(sdi->conn, "D%d:WF?",
+				ch->index + 1) != SR_OK)
+				return SR_ERR;
+		} else {
+			if (sr_scpi_send(sdi->conn, "C%d:WF? ALL",
+				ch->index + 1) != SR_OK)
+				return SR_ERR;
+		}
+		siglent_sds_set_wait_event(devc, WAIT_NONE);
+		break;
+	}
 
 	siglent_sds_set_wait_event(devc, WAIT_BLOCK);
 
@@ -250,7 +261,8 @@ static int siglent_sds_read_header(struct sr_dev_inst *sdi)
 	long data_length = 0;
 
 	/* Read header from device. */
-	ret = sr_scpi_read_data(scpi, buf, SIGLENT_HEADER_SIZE);
+	ret = sr_scpi_read_data(scpi, buf,
+							SIGLENT_HEADER_SIZE);
 	if (ret < SIGLENT_HEADER_SIZE) {
 		sr_err("Read error while reading data header.");
 		return SR_ERR;
@@ -262,6 +274,7 @@ static int siglent_sds_read_header(struct sr_dev_inst *sdi)
 	/* Parse WaveDescriptor header. */
 	memcpy(&desc_length, buf + 36, 4); /* Descriptor block length */
 	memcpy(&data_length, buf + 60, 4); /* Data block length */
+
 
 	devc->block_header_size = desc_length + 15;
 	devc->num_samples = data_length;
@@ -325,6 +338,7 @@ SR_PRIV int siglent_sds_receive(int fd, int revents, void *cb_data)
 	len = 0;
 
 	if (devc->num_block_bytes == 0) {
+
 		if (devc->memory_depth >= 14000000) {
 			sr_err("Device memory depth is set to 14Mpts, so please be patient.");
 			g_usleep(4900000); /* Sleep for large memory set. */
@@ -346,6 +360,7 @@ SR_PRIV int siglent_sds_receive(int fd, int revents, void *cb_data)
 		devc->num_block_bytes = 0;
 		devc->num_block_read = 0;
 	}
+
 
 	if (len == -1) {
 		sr_err("Read error, aborting capture.");
