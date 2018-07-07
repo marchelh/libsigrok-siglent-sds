@@ -32,7 +32,7 @@
 //#define ACQ_BUFFER_SIZE (6000000)
 #define ACQ_BUFFER_SIZE (18000000)
 
-#define SIGLENT_HEADER_SIZE 351
+#define SIGLENT_HEADER_SIZE 363
 
 /* Maximum number of samples to retrieve at once. */
 #define ACQ_BLOCK_SIZE (30 * 1000)
@@ -47,6 +47,7 @@
 enum protocol_version {
 	SPO_MODEL,
 	NON_SPO_MODEL,
+	ESERIES,
 };
 
 enum data_source {

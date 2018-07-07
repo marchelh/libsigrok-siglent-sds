@@ -154,7 +154,7 @@ SR_PRIV int siglent_sds_capture_start(const struct sr_dev_inst *sdi)
 		return SR_ERR;
 
 	switch (devc->model->series->protocol) {
-	case SPO_MODEL:
+	case (SPO_MODEL):
 		if (devc->data_source == DATA_SOURCE_SCREEN) {
 			char *buf;
 			int out;
@@ -203,6 +203,55 @@ SR_PRIV int siglent_sds_capture_start(const struct sr_dev_inst *sdi)
 			siglent_sds_set_wait_event(devc, WAIT_STOP);
 		}
 		break;
+	case (ESERIES):
+		if (devc->data_source == DATA_SOURCE_SCREEN) {
+			char *buf;
+			int out;
+
+			sr_dbg("Starting data capture for active frameset %" PRIu64 " of %" PRIu64,
+				   devc->num_frames + 1, devc->limit_frames);
+			if (siglent_sds_config_set(sdi, "ARM") != SR_OK)
+				return SR_ERR;
+			if (sr_scpi_get_string(sdi->conn, ":INR?", &buf) != SR_OK)
+				return SR_ERR;
+			sr_atoi(buf, &out);
+			if (out == DEVICE_STATE_TRIG_RDY) {
+				siglent_sds_set_wait_event(devc, WAIT_TRIGGER);
+			} else if (out == DEVICE_STATE_TRIG_RDY + 1) {
+				sr_spew("Device triggered.");
+				siglent_sds_set_wait_event(devc, WAIT_BLOCK);
+				return SR_OK;
+			} else {
+				sr_spew("Device did not enter ARM mode.");
+				return SR_ERR;
+			}
+		} else { /* TODO: Implement history retrieval. */
+			unsigned int framecount;
+			char buf[200];
+			int ret;
+
+			sr_dbg("Starting data capture for history frameset.");
+			if (siglent_sds_config_set(sdi, "FPAR?") != SR_OK)
+				return SR_ERR;
+			ret = sr_scpi_read_data(sdi->conn, buf, 200);
+			if (ret < 0) {
+				sr_err("Read error while reading data header.");
+				return SR_ERR;
+			}
+			memcpy(&framecount, buf + 40, 4);
+			if (devc->limit_frames > framecount)
+				sr_err("Frame limit higher than frames in buffer of device!");
+			else if (devc->limit_frames == 0)
+				devc->limit_frames = framecount;
+			sr_dbg("Starting data capture for history frameset %" PRIu64 " of %" PRIu64,
+				   devc->num_frames + 1, devc->limit_frames);
+			if (siglent_sds_config_set(sdi, "FRAM %i", devc->num_frames + 1) != SR_OK)
+				return SR_ERR;
+			if (siglent_sds_channel_start(sdi) != SR_OK)
+				return SR_ERR;
+			siglent_sds_set_wait_event(devc, WAIT_STOP);
+		}
+		break;
 	case NON_SPO_MODEL:
 		siglent_sds_set_wait_event(devc, WAIT_TRIGGER);
 		break;
@@ -222,11 +271,12 @@ SR_PRIV int siglent_sds_channel_start(const struct sr_dev_inst *sdi)
 
 	ch = devc->channel_entry->data;
 
-	sr_dbg("Starting reading data from channel %d.", ch->index + 1);
+	sr_dbg("Start reading data from channel %d.", ch->index + 1);
 
 	switch (devc->model->series->protocol) {
 	case NON_SPO_MODEL:
 	case SPO_MODEL:
+
 
 		if (ch->type == SR_CHANNEL_LOGIC) {
 			if (sr_scpi_send(sdi->conn, "D%d:WF?",
@@ -239,8 +289,21 @@ SR_PRIV int siglent_sds_channel_start(const struct sr_dev_inst *sdi)
 		}
 		siglent_sds_set_wait_event(devc, WAIT_NONE);
 		break;
+	case ESERIES:
+		if (ch->type == SR_CHANNEL_LOGIC) {
+			if (sr_scpi_send(sdi->conn, "D%d:WF? DAT2",
+				ch->index + 1) != SR_OK)
+				return SR_ERR;
+		} else {
+			if (sr_scpi_send(sdi->conn, "C%d:WF? ALL",
+				ch->index + 1) != SR_OK)
+				return SR_ERR;
+		}
+		siglent_sds_set_wait_event(devc, WAIT_NONE);
+		break;
 	}
-
+	if (sr_scpi_read_begin(sdi->conn) != SR_OK)
+		return TRUE;
 	siglent_sds_set_wait_event(devc, WAIT_BLOCK);
 
 	devc->num_channel_bytes = 0;
@@ -295,8 +358,11 @@ SR_PRIV int siglent_sds_receive(int fd, int revents, void *cb_data)
 	struct sr_analog_meaning meaning;
 	struct sr_analog_spec spec;
 	struct sr_datafeed_logic logic;
-	int len, i;
 	struct sr_channel *ch;
+	int len, i;
+	float wait;
+
+
 
 	(void)fd;
 
@@ -338,14 +404,28 @@ SR_PRIV int siglent_sds_receive(int fd, int revents, void *cb_data)
 	len = 0;
 
 	if (devc->num_block_bytes == 0) {
-
-		if (devc->memory_depth >= 14000000) {
-			sr_err("Device memory depth is set to 14Mpts, so please be patient.");
-			g_usleep(4900000); /* Sleep for large memory set. */
+		/* Wait for the device to fill its output buffers. */
+		switch(devc->model->series->protocol){
+		case NON_SPO_MODEL:
+		case SPO_MODEL:
+			// The older models need more time to prepare the the output buffers due to CPU speed.
+			wait = (devc->memory_depth * 2.5); // + 1000000;
+			sr_dbg("Waiting %.f0 msecs for device to prepare the output buffers", wait/1000 );
+			g_usleep(wait);
+			if (sr_scpi_read_begin(scpi) != SR_OK)
+				return TRUE;
+			break;
+		case ESERIES:
+			// The newer models (ending with the E) have faster CPU's but still need time when a slow timebase is selected.
+			if (sr_scpi_read_begin(scpi) != SR_OK)
+				return TRUE;
+			wait = ((devc->timebase * devc->model->series->num_horizontal_divs) * 100000);
+			sr_dbg("Waiting %.f0 msecs for device to prepare the output buffers", wait/1000  );
+			g_usleep(wait);
+			break;
 		}
-		if (sr_scpi_read_begin(scpi) != SR_OK)
-			return TRUE;
-		sr_dbg("New block header expected.");
+
+		sr_dbg("New block with header expected.");
 		len = siglent_sds_read_header(sdi);
 		if (len == 0)
 			/* Still reading the header. */
@@ -357,7 +437,7 @@ SR_PRIV int siglent_sds_receive(int fd, int revents, void *cb_data)
 			sdi->driver->dev_acquisition_stop(sdi);
 			return TRUE;
 		}
-		devc->num_block_bytes = 0;
+		devc->num_block_bytes = len;
 		devc->num_block_read = 0;
 	}
 
@@ -369,22 +449,26 @@ SR_PRIV int siglent_sds_receive(int fd, int revents, void *cb_data)
 		sdi->driver->dev_acquisition_stop(sdi);
 		return TRUE;
 	}
-
-	while (devc->num_block_bytes < devc->num_samples) {
-		len = sr_scpi_read_data(scpi, (char *)devc->buffer, devc->num_samples);
-		if (len == -1) {
-			sr_err("Read error, aborting capture.");
-			packet.type = SR_DF_FRAME_END;
-			sr_session_send(sdi, &packet);
-			sdi->driver->dev_acquisition_stop(sdi);
-			return TRUE;
-		}
-		devc->num_block_read += 1;
-		devc->num_block_bytes += len;
-		if (devc->num_block_bytes >= devc->num_samples ) {
+	gboolean read_complete = false;
+	do  {
+		read_complete=false;
+		if (devc->num_block_bytes > devc->num_samples) {
+			/* We received all data as one block */
 			/* Offset the data block buffer past the IEEE header and description header. */
 			devc->buffer += devc->block_header_size;
 			len = devc->num_samples;
+		} else {
+			sr_dbg("Requesting: %li bytes.", devc->num_samples-devc->num_block_bytes);
+			len = sr_scpi_read_data(scpi, (char *)devc->buffer, devc->num_samples-devc->num_block_bytes);
+			if (len == -1) {
+				sr_err("Read error, aborting capture.");
+				packet.type = SR_DF_FRAME_END;
+				sr_session_send(sdi, &packet);
+				sdi->driver->dev_acquisition_stop(sdi);
+				return TRUE;
+			}
+			devc->num_block_read += 1;
+			devc->num_block_bytes += len;
 		}
 		sr_dbg("Received block: %i, %d bytes.", devc->num_block_read, len);
 		if (ch->type == SR_CHANNEL_ANALOG) {
@@ -425,11 +509,12 @@ SR_PRIV int siglent_sds_receive(int fd, int revents, void *cb_data)
 			packet.payload = &logic;
 			sr_session_send(sdi, &packet);
 		}
-
-		if (devc->num_samples == devc->num_block_bytes) {
+		len = 0;
+		if (devc->num_samples == (devc->num_block_bytes - SIGLENT_HEADER_SIZE)) {
 			sr_dbg("Transfer has been completed.");
 			devc->num_header_bytes = 0;
 			devc->num_block_bytes = 0;
+			read_complete = true;
 			if (!sr_scpi_read_complete(scpi)) {
 				sr_err("Read should have been completed.");
 				packet.type = SR_DF_FRAME_END;
@@ -442,7 +527,7 @@ SR_PRIV int siglent_sds_receive(int fd, int revents, void *cb_data)
 			sr_dbg("%" PRIu64 " of %" PRIu64 " block bytes read.",
 				devc->num_block_bytes, devc->num_samples);
 		}
-	}
+	} while (!read_complete);
 
 	if (devc->channel_entry->next) {
 		/* We got the frame for this channel, now get the next channel. */
@@ -478,8 +563,8 @@ SR_PRIV int siglent_sds_get_dev_cfg(const struct sr_dev_inst *sdi)
 	unsigned int i;
 	int res, num_tokens;
 	gchar **tokens;
-        int len;
-        float trigger_pos;
+	int len;
+	float trigger_pos;
 
 	devc = sdi->priv;
 
@@ -503,7 +588,7 @@ SR_PRIV int siglent_sds_get_dev_cfg(const struct sr_dev_inst *sdi)
 
 		sr_dbg("Check logic analyzer channel state.");
 		devc->la_enabled = FALSE;
-		cmd = g_strdup_printf("DGST?");
+		cmd = g_strdup_printf("DI:SW?");
 		res = sr_scpi_get_bool(sdi->conn, cmd, &status);
 		g_free(cmd);
 		if (res != SR_OK)
@@ -512,7 +597,7 @@ SR_PRIV int siglent_sds_get_dev_cfg(const struct sr_dev_inst *sdi)
 		if (status) {
 			devc->la_enabled = TRUE;
 			for (i = 0; i < ARRAY_SIZE(devc->digital_channels); i++) {
-				cmd = g_strdup_printf("D%i:DGCH?", i);
+				cmd = g_strdup_printf("D%i:TRA?", i);
 				res = sr_scpi_get_bool(sdi->conn, cmd, &devc->digital_channels[i]);
 				g_free(cmd);
 				if (res != SR_OK)
@@ -585,21 +670,22 @@ SR_PRIV int siglent_sds_get_dev_cfg(const struct sr_dev_inst *sdi)
 	/* TODO: Horizontal trigger position. */
 	response = "";
 	trigger_pos = 0;
-	if (sr_scpi_get_string(sdi->conn, g_strdup_printf("%s:TRDL?", devc->trigger_source), &response) != SR_OK)
-		return SR_ERR;
-	len = strlen(response);
-	if (!g_ascii_strcasecmp(response + (len - 2), "us")) {
-		trigger_pos = atof(response) / SR_GHZ(1);
-		sr_dbg("Current trigger position us %s.", response);
-	} else if (!g_ascii_strcasecmp(response + (len - 2), "ns")) {
-		trigger_pos = atof(response) / SR_MHZ(1);
-		sr_dbg("Current trigger position ms %s.", response);
-	} else if (!g_ascii_strcasecmp(response + (len - 2), "ms")) {
-		trigger_pos = atof(response) / SR_KHZ(1);
-		sr_dbg("Current trigger position ns %s.", response);
-	} else if (!g_ascii_strcasecmp(response + (len - 2), "s")) {
-		trigger_pos = atof(response);
-		sr_dbg("Current trigger position s %s.", response);
+	//if (sr_scpi_get_string(sdi->conn, g_strdup_printf("%s:TRDL?", devc->trigger_source), &response) != SR_OK)
+	//	return SR_ERR;
+	//len = strlen(response);
+	len = strlen(tokens[4]);
+	if (!g_ascii_strcasecmp(tokens[4] + (len - 2), "us")) {
+		trigger_pos = atof(tokens[4]) / SR_GHZ(1);
+		sr_dbg("Current trigger position us %s.", tokens[4] );
+	} else if (!g_ascii_strcasecmp(tokens[4]  + (len - 2), "ns")) {
+		trigger_pos = atof(tokens[4] ) / SR_MHZ(1);
+		sr_dbg("Current trigger position ms %s.", tokens[4] );
+	} else if (!g_ascii_strcasecmp(tokens[4]  + (len - 2), "ms")) {
+		trigger_pos = atof(tokens[4] ) / SR_KHZ(1);
+		sr_dbg("Current trigger position ns %s.", tokens[4] );
+	} else if (!g_ascii_strcasecmp(tokens[4]  + (len - 2), "s")) {
+		trigger_pos = atof(tokens[4] );
+		sr_dbg("Current trigger position s %s.", tokens[4] );
 	};
 	devc->horiz_triggerpos = trigger_pos;
 
@@ -669,36 +755,50 @@ SR_PRIV int siglent_sds_get_dev_cfg_horizontal(const struct sr_dev_inst *sdi)
 
 	devc = sdi->priv;
 	cmd = g_strdup_printf("SANU? C1");
-	res = sr_scpi_get_string(sdi->conn, cmd, &sample_points_string);
+	switch (devc->model->series->protocol) {
+	case SPO_MODEL:
+	case NON_SPO_MODEL:
+		res = sr_scpi_get_string(sdi->conn, cmd, &sample_points_string);
+		g_free(cmd);
+		samplerate_scope = 0;
+		fvalue = 0;
+		if (res != SR_OK)
+			return SR_ERR;
+		if (g_strstr_len(sample_points_string, -1, "Mpts") != NULL) {
+			sample_points_string[strlen(sample_points_string) -4] = '\0';
+			if (sr_atof_ascii(sample_points_string, &fvalue) != SR_OK) {
+				sr_dbg("Invalid float converted from scope response.");
+				return SR_ERR;
+			}
+			samplerate_scope = fvalue * 1000000;
+		} else if (g_strstr_len(sample_points_string, -1, "Kpts") != NULL){
+			sample_points_string[strlen(sample_points_string) -4] = '\0';
+			if (sr_atof_ascii(sample_points_string, &fvalue) != SR_OK) {
+				sr_dbg("Invalid float converted from scope response.");
+				return SR_ERR;
+			}
+			samplerate_scope = fvalue * 10000;
+		} else {
+			samplerate_scope = fvalue;
+		}
+		g_free(sample_points_string);
+		devc->memory_depth = samplerate_scope;
+		break;
+	case ESERIES:
+		if (sr_scpi_get_float(sdi->conn, cmd, &fvalue) != SR_OK)
+			return SR_ERR;
+		devc->memory_depth = (long) fvalue;
+		break;
+	};
 	g_free(cmd);
-	samplerate_scope = 0;
-	fvalue = 0;
-	if (res != SR_OK)
-		return SR_ERR;
 
-	if (g_strstr_len(sample_points_string, -1, "Mpts") != NULL) {
-		sample_points_string[strlen(sample_points_string) -4] = '\0';
-		if (sr_atof_ascii(sample_points_string, &fvalue) != SR_OK) {
-			sr_dbg("Invalid float converted from scope response.");
-			return SR_ERR;
-		}
-		samplerate_scope = fvalue * 1000000;
-	} else if (g_strstr_len(sample_points_string, -1, "Kpts") != NULL){
-		sample_points_string[strlen(sample_points_string) -4] = '\0';
-		if (sr_atof_ascii(sample_points_string, &fvalue) != SR_OK) {
-			sr_dbg("Invalid float converted from scope response.");
-			return SR_ERR;
-		}
-		samplerate_scope = fvalue * 10000;
-	} else {
-		samplerate_scope = fvalue;
-	}
-	g_free(sample_points_string);
 	/* Get the timebase. */
 	if (sr_scpi_get_float(sdi->conn, ":TDIV?", &devc->timebase) != SR_OK)
 		return SR_ERR;
+
 	sr_dbg("Current timebase: %g.", devc->timebase);
-	devc->samplerate = samplerate_scope / (devc->timebase * devc->model->series->num_horizontal_divs);
-	devc->memory_depth = samplerate_scope;
+	devc->samplerate = devc->memory_depth / (devc->timebase * devc->model->series->num_horizontal_divs);
+	sr_dbg("Current samplerate: %0f.", devc->samplerate);
+	sr_dbg("Current memory depth: %lu.", devc->memory_depth);
 	return SR_OK;
 }
