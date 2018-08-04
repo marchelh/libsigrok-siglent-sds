@@ -209,7 +209,7 @@ SR_PRIV int siglent_sds_capture_start(const struct sr_dev_inst *sdi)
 			int out;
 
 			sr_dbg("Starting data capture for active frameset %" PRIu64 " of %" PRIu64,
-				   devc->num_frames + 1, devc->limit_frames);
+				devc->num_frames + 1, devc->limit_frames);
 			if (siglent_sds_config_set(sdi, "ARM") != SR_OK)
 				return SR_ERR;
 			if (sr_scpi_get_string(sdi->conn, ":INR?", &buf) != SR_OK)
@@ -244,7 +244,7 @@ SR_PRIV int siglent_sds_capture_start(const struct sr_dev_inst *sdi)
 			else if (devc->limit_frames == 0)
 				devc->limit_frames = framecount;
 			sr_dbg("Starting data capture for history frameset %" PRIu64 " of %" PRIu64,
-				   devc->num_frames + 1, devc->limit_frames);
+				devc->num_frames + 1, devc->limit_frames);
 			if (siglent_sds_config_set(sdi, "FRAM %i", devc->num_frames + 1) != SR_OK)
 				return SR_ERR;
 			if (siglent_sds_channel_start(sdi) != SR_OK)
@@ -349,7 +349,7 @@ static int siglent_sds_read_header(struct sr_dev_inst *sdi)
 static int siglent_sds_get_digital(const struct sr_dev_inst *sdi, struct sr_channel *ch){
 	struct sr_scpi_dev_inst *scpi = sdi->conn;
 	struct dev_context *devc = sdi->priv;
-	GArray  *tmp_samplebuf;				// Temp buffer while iterating over the scope samples
+	GArray *tmp_samplebuf;				// Temp buffer while iterating over the scope samples
 	char *buf = (char *) devc->buffer; 	// Buffer from scope
 	uint8_t tmp_value; 						// Holding temp value from data Sigrok
 	GArray *data_low_channels;			// Data for Sigrok
@@ -536,7 +536,7 @@ SR_PRIV int siglent_sds_receive(int fd, int revents, void *cb_data)
 				if (sr_scpi_read_begin(scpi) != SR_OK)
 					return TRUE;
 				wait = ((devc->timebase * devc->model->series->num_horizontal_divs) * 100000);
-				sr_dbg("Waiting %.f0 msecs for device to prepare the output buffers", wait/1000  );
+				sr_dbg("Waiting %.f0 msecs for device to prepare the output buffers", wait/1000);
 				g_usleep(wait);
 				break;
 			}
@@ -564,7 +564,7 @@ SR_PRIV int siglent_sds_receive(int fd, int revents, void *cb_data)
 				sdi->driver->dev_acquisition_stop(sdi);
 				return TRUE;
 			}
-			do  {
+			do {
 				read_complete=false;
 				if (devc->num_block_bytes > devc->num_samples) {
 					/* We received all data as one block */
@@ -811,13 +811,13 @@ SR_PRIV int siglent_sds_get_dev_cfg(const struct sr_dev_inst *sdi)
 	if (!g_ascii_strcasecmp(tokens[4] + (len - 2), "us")) {
 		trigger_pos = atof(tokens[4]) / SR_GHZ(1);
 		sr_dbg("Current trigger position us %s.", tokens[4] );
-	} else if (!g_ascii_strcasecmp(tokens[4]  + (len - 2), "ns")) {
+	} else if (!g_ascii_strcasecmp(tokens[4] + (len - 2), "ns")) {
 		trigger_pos = atof(tokens[4] ) / SR_MHZ(1);
 		sr_dbg("Current trigger position ms %s.", tokens[4] );
-	} else if (!g_ascii_strcasecmp(tokens[4]  + (len - 2), "ms")) {
+	} else if (!g_ascii_strcasecmp(tokens[4] + (len - 2), "ms")) {
 		trigger_pos = atof(tokens[4] ) / SR_KHZ(1);
 		sr_dbg("Current trigger position ns %s.", tokens[4] );
-	} else if (!g_ascii_strcasecmp(tokens[4]  + (len - 2), "s")) {
+	} else if (!g_ascii_strcasecmp(tokens[4] + (len - 2), "s")) {
 		trigger_pos = atof(tokens[4] );
 		sr_dbg("Current trigger position s %s.", tokens[4] );
 	};
