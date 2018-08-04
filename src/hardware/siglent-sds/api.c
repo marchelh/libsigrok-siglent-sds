@@ -832,7 +832,6 @@ static int dev_acquisition_start(const struct sr_dev_inst *sdi)
 				if (!devc->la_enabled) {
 					if (siglent_sds_config_set(sdi, "DI:SW?") != SR_OK)
 						return SR_ERR;
-					g_usleep(630000);
 					devc->la_enabled = TRUE;
 				}
 				devc->enabled_channels = g_slist_append(
@@ -842,8 +841,6 @@ static int dev_acquisition_start(const struct sr_dev_inst *sdi)
 			if (siglent_sds_config_set(sdi, "D%d:TRA %s", ch->index,
 				ch->enabled ? "ON" : "OFF") != SR_OK)
 				return SR_ERR;
-			/* Slowing the command sequence down to let the device handle it. */
-			g_usleep(630000);
 			devc->digital_channels[ch->index] = ch->enabled;
 		}
 	}

@@ -271,7 +271,7 @@ SR_PRIV int siglent_sds_channel_start(const struct sr_dev_inst *sdi)
 
 	ch = devc->channel_entry->data;
 
-	sr_dbg("Start reading data from channel %d.", ch->index + 1);
+
 
 	switch (devc->model->series->protocol) {
 	case NON_SPO_MODEL:
@@ -279,6 +279,7 @@ SR_PRIV int siglent_sds_channel_start(const struct sr_dev_inst *sdi)
 
 
 		if (ch->type == SR_CHANNEL_LOGIC) {
+			sr_dbg("Start reading data from channel %s.", ch->name);
 			if (sr_scpi_send(sdi->conn, "D%d:WF?",
 				ch->index + 1) != SR_OK)
 				return SR_ERR;
@@ -290,21 +291,19 @@ SR_PRIV int siglent_sds_channel_start(const struct sr_dev_inst *sdi)
 		siglent_sds_set_wait_event(devc, WAIT_NONE);
 		break;
 	case ESERIES:
-		if (ch->type == SR_CHANNEL_LOGIC) {
-			if (sr_scpi_send(sdi->conn, "D%d:WF? DAT2",
-				ch->index + 1) != SR_OK)
-				return SR_ERR;
-		} else {
+		if (ch->type == SR_CHANNEL_ANALOG) {
+			sr_dbg("Start reading data from channel %s.", ch->name);
 			if (sr_scpi_send(sdi->conn, "C%d:WF? ALL",
 				ch->index + 1) != SR_OK)
 				return SR_ERR;
 		}
 		siglent_sds_set_wait_event(devc, WAIT_NONE);
+		if (sr_scpi_read_begin(sdi->conn) != SR_OK)
+			return TRUE;
+		siglent_sds_set_wait_event(devc, WAIT_BLOCK);
 		break;
 	}
-	if (sr_scpi_read_begin(sdi->conn) != SR_OK)
-		return TRUE;
-	siglent_sds_set_wait_event(devc, WAIT_BLOCK);
+
 
 	devc->num_channel_bytes = 0;
 	devc->num_header_bytes = 0;
@@ -347,6 +346,124 @@ static int siglent_sds_read_header(struct sr_dev_inst *sdi)
 	return ret;
 }
 
+static int siglent_sds_get_digital(const struct sr_dev_inst *sdi, struct sr_channel *ch){
+	struct sr_scpi_dev_inst *scpi = sdi->conn;
+	struct dev_context *devc = sdi->priv;
+	GArray  *tmp_samplebuf;				// Temp buffer while iterating over the scope samples
+	char *buf = (char *) devc->buffer; 	// Buffer from scope
+	uint8_t tmp_value; 						// Holding temp value from data Sigrok
+	GArray *data_low_channels;			// Data for Sigrok
+	GArray *data_high_channels;		// Data for Sigrok
+	GArray *buffdata;							// Temp bufferData for Sigrok
+	GSList *l;											// Current channel
+	gboolean low_channels;				// Lower channels enabled
+	gboolean high_channels;				// Higher channels enabled
+	int len;
+	int channel_index;
+	long samples_index;
+
+	channel_index = 0;
+	low_channels = FALSE;
+	high_channels = FALSE;
+	data_low_channels = g_array_new(FALSE, TRUE, sizeof(uint8_t));
+	data_high_channels = g_array_new(FALSE, TRUE, sizeof(uint8_t));
+	for (l = sdi->channels; l; l = l->next) {
+		ch = l->data;
+		samples_index = 0;
+		if (ch->type == SR_CHANNEL_LOGIC) {
+			if (ch->enabled){
+				if (sr_scpi_send(sdi->conn, "D%d:WF? DAT2",
+					ch->index) != SR_OK)
+					return SR_ERR;
+				if (sr_scpi_read_begin(scpi) != SR_OK)
+					return TRUE;
+				len = sr_scpi_read_data(scpi, buf, -1);
+				if(len<0)
+					return TRUE;
+				len = len -15;
+				buffdata = g_array_sized_new(FALSE, FALSE, sizeof(uint8_t), len);
+				buf += 15; // Skipping the data header
+				g_array_append_vals(buffdata, buf, len);
+				tmp_samplebuf = g_array_sized_new(FALSE, FALSE, sizeof(uint8_t), len); //New temp buffer
+				for (uint64_t cur_sample_index = 0; cur_sample_index < devc->memory_depth_digital; cur_sample_index++) {
+					char sample = (char) g_array_index(buffdata, uint8_t, cur_sample_index);
+					for (int ii = 0; ii < 8; ++ii, sample >>= 1) {
+						if(ch->index<8){
+							channel_index = ch->index;
+							if (data_low_channels->len <= samples_index){
+								tmp_value = 0; //new sample
+								low_channels = TRUE; //We have at least one enabled low channel
+							}else{
+								/* Get previous stored sample from low channel buffer */
+								tmp_value = g_array_index(data_low_channels, uint8_t, samples_index);
+							}
+						}else{
+							channel_index = ch->index - 8;
+							if (data_high_channels->len <= samples_index){
+								tmp_value = 0; //new sample
+								high_channels = TRUE; //We have at least one enabled high channel
+							}else{
+								/* Get previous stored sample from high channel buffer */
+								tmp_value = g_array_index(data_high_channels, uint8_t, samples_index);
+							}
+						}
+						/* Check if the current scope sample bit is set */
+						if (sample & 0x1) {
+							tmp_value |= 1UL << channel_index; // Set current scope sample bit based on channel index
+						}
+						g_array_append_val(tmp_samplebuf, tmp_value);
+						samples_index++;
+					}
+				}
+
+				/* Clear the buffers to prepare for the new samples */
+				if(ch->index < 8){
+					g_array_free(data_low_channels, FALSE);
+					data_low_channels = g_array_new(FALSE, FALSE, sizeof(uint8_t));
+				} else {
+					g_array_free(data_high_channels, FALSE);
+					data_high_channels = g_array_new(FALSE, FALSE, sizeof(uint8_t));
+				}
+
+				/* Storing the converted temp values from the the scope into the buffers */
+				for (long index = 0; index < tmp_samplebuf->len;++index){
+					uint8_t value = g_array_index(tmp_samplebuf, uint8_t, index);
+					if(ch->index < 8){
+						g_array_append_val(data_low_channels,value);
+					} else {
+						g_array_append_val(data_high_channels,value);
+					}
+				}
+			}
+		}
+	}
+
+	/* Combining the lower and higher channel buffers into one buffer for sigrok */
+	devc->dig_buffer = g_array_new(FALSE, FALSE, sizeof(uint8_t));
+	for (uint64_t index = 0; index < devc->memory_depth_digital;++index){
+		uint8_t value;
+		if(low_channels){
+			value = g_array_index(data_low_channels, uint8_t, index);
+			g_array_append_val(devc->dig_buffer,value);
+		} else {
+			value = 0;
+			g_array_append_val(devc->dig_buffer,value);
+		}
+		if (high_channels){
+			value = g_array_index(data_high_channels, uint8_t, index);
+			g_array_append_val(devc->dig_buffer,value);
+		} else {
+			value = 0;
+			g_array_append_val(devc->dig_buffer,value);
+		}
+	}
+	g_array_free(data_low_channels, TRUE);
+	g_array_free(data_high_channels, TRUE);
+	g_array_free(buffdata, TRUE);
+	g_array_free(tmp_samplebuf, TRUE);
+	return len;
+}
+
 SR_PRIV int siglent_sds_receive(int fd, int revents, void *cb_data)
 {
 	struct sr_dev_inst *sdi;
@@ -361,8 +478,7 @@ SR_PRIV int siglent_sds_receive(int fd, int revents, void *cb_data)
 	struct sr_channel *ch;
 	int len, i;
 	float wait;
-
-
+	gboolean read_complete = false;
 
 	(void)fd;
 
@@ -402,64 +518,34 @@ SR_PRIV int siglent_sds_receive(int fd, int revents, void *cb_data)
 	}
 	ch = devc->channel_entry->data;
 	len = 0;
+	if (ch->type == SR_CHANNEL_ANALOG) {
+		if (devc->num_block_bytes == 0) {
+			/* Wait for the device to fill its output buffers. */
+			switch(devc->model->series->protocol){
+			case NON_SPO_MODEL:
+			case SPO_MODEL:
+				// The older models need more time to prepare the the output buffers due to CPU speed.
+				wait = (devc->memory_depth_analog * 2.5); // + 1000000;
+				sr_dbg("Waiting %.f0 msecs for device to prepare the output buffers", wait/1000 );
+				g_usleep(wait);
+				if (sr_scpi_read_begin(scpi) != SR_OK)
+					return TRUE;
+				break;
+			case ESERIES:
+				// The newer models (ending with the E) have faster CPU's but still need time when a slow timebase is selected.
+				if (sr_scpi_read_begin(scpi) != SR_OK)
+					return TRUE;
+				wait = ((devc->timebase * devc->model->series->num_horizontal_divs) * 100000);
+				sr_dbg("Waiting %.f0 msecs for device to prepare the output buffers", wait/1000  );
+				g_usleep(wait);
+				break;
+			}
 
-	if (devc->num_block_bytes == 0) {
-		/* Wait for the device to fill its output buffers. */
-		switch(devc->model->series->protocol){
-		case NON_SPO_MODEL:
-		case SPO_MODEL:
-			// The older models need more time to prepare the the output buffers due to CPU speed.
-			wait = (devc->memory_depth * 2.5); // + 1000000;
-			sr_dbg("Waiting %.f0 msecs for device to prepare the output buffers", wait/1000 );
-			g_usleep(wait);
-			if (sr_scpi_read_begin(scpi) != SR_OK)
+			sr_dbg("New block with header expected.");
+			len = siglent_sds_read_header(sdi);
+			if (len == 0)
+				/* Still reading the header. */
 				return TRUE;
-			break;
-		case ESERIES:
-			// The newer models (ending with the E) have faster CPU's but still need time when a slow timebase is selected.
-			if (sr_scpi_read_begin(scpi) != SR_OK)
-				return TRUE;
-			wait = ((devc->timebase * devc->model->series->num_horizontal_divs) * 100000);
-			sr_dbg("Waiting %.f0 msecs for device to prepare the output buffers", wait/1000  );
-			g_usleep(wait);
-			break;
-		}
-
-		sr_dbg("New block with header expected.");
-		len = siglent_sds_read_header(sdi);
-		if (len == 0)
-			/* Still reading the header. */
-			return TRUE;
-		if (len == -1) {
-			sr_err("Read error, aborting capture.");
-			packet.type = SR_DF_FRAME_END;
-			sr_session_send(sdi, &packet);
-			sdi->driver->dev_acquisition_stop(sdi);
-			return TRUE;
-		}
-		devc->num_block_bytes = len;
-		devc->num_block_read = 0;
-	}
-
-
-	if (len == -1) {
-		sr_err("Read error, aborting capture.");
-		packet.type = SR_DF_FRAME_END;
-		sr_session_send(sdi, &packet);
-		sdi->driver->dev_acquisition_stop(sdi);
-		return TRUE;
-	}
-	gboolean read_complete = false;
-	do  {
-		read_complete=false;
-		if (devc->num_block_bytes > devc->num_samples) {
-			/* We received all data as one block */
-			/* Offset the data block buffer past the IEEE header and description header. */
-			devc->buffer += devc->block_header_size;
-			len = devc->num_samples;
-		} else {
-			sr_dbg("Requesting: %li bytes.", devc->num_samples-devc->num_block_bytes);
-			len = sr_scpi_read_data(scpi, (char *)devc->buffer, devc->num_samples-devc->num_block_bytes);
 			if (len == -1) {
 				sr_err("Read error, aborting capture.");
 				packet.type = SR_DF_FRAME_END;
@@ -467,77 +553,122 @@ SR_PRIV int siglent_sds_receive(int fd, int revents, void *cb_data)
 				sdi->driver->dev_acquisition_stop(sdi);
 				return TRUE;
 			}
-			devc->num_block_read += 1;
-			devc->num_block_bytes += len;
-		}
-		sr_dbg("Received block: %i, %d bytes.", devc->num_block_read, len);
-		if (ch->type == SR_CHANNEL_ANALOG) {
-			float vdiv = devc->vdiv[ch->index];
-			float offset = devc->vert_offset[ch->index];
-			GArray *float_data;
-			static GArray *data;
-			float voltage, vdivlog;
-			int digits;
+			devc->num_block_bytes = len;
+			devc->num_block_read = 0;
 
-			data = g_array_sized_new(FALSE, FALSE, sizeof(uint8_t), len);
-			g_array_append_vals(data, devc->buffer, len);
-			float_data = g_array_new(FALSE, FALSE, sizeof(float));
-			for (i = 0; i < len; i++) {
-				voltage = (float)g_array_index(data, int8_t, i) / 25;
-				voltage = ((vdiv * voltage) - offset);
-				g_array_append_val(float_data, voltage);
-			}
-			vdivlog = log10f(vdiv);
-			digits = -(int) vdivlog + (vdivlog < 0.0);
-			sr_analog_init(&analog, &encoding, &meaning, &spec, digits);
-			analog.meaning->channels = g_slist_append(NULL, ch);
-			analog.num_samples = float_data->len;
-			analog.data = (float *)float_data->data;
-			analog.meaning->mq = SR_MQ_VOLTAGE;
-			analog.meaning->unit = SR_UNIT_VOLT;
-			analog.meaning->mqflags = 0;
-			packet.type = SR_DF_ANALOG;
-			packet.payload = &analog;
-			sr_session_send(sdi, &packet);
-			g_slist_free(analog.meaning->channels);
-			g_array_free(data, TRUE);
-		} else {
-			logic.length = len;
-			logic.unitsize = 1;
-			logic.data = devc->buffer;
-			packet.type = SR_DF_LOGIC;
-			packet.payload = &logic;
-			sr_session_send(sdi, &packet);
-		}
-		len = 0;
-		if (devc->num_samples == (devc->num_block_bytes - SIGLENT_HEADER_SIZE)) {
-			sr_dbg("Transfer has been completed.");
-			devc->num_header_bytes = 0;
-			devc->num_block_bytes = 0;
-			read_complete = true;
-			if (!sr_scpi_read_complete(scpi)) {
-				sr_err("Read should have been completed.");
+
+			if (len == -1) {
+				sr_err("Read error, aborting capture.");
 				packet.type = SR_DF_FRAME_END;
 				sr_session_send(sdi, &packet);
 				sdi->driver->dev_acquisition_stop(sdi);
 				return TRUE;
 			}
-			devc->num_block_read = 0;
-		} else {
-			sr_dbg("%" PRIu64 " of %" PRIu64 " block bytes read.",
-				devc->num_block_bytes, devc->num_samples);
-		}
-	} while (!read_complete);
+			do  {
+				read_complete=false;
+				if (devc->num_block_bytes > devc->num_samples) {
+					/* We received all data as one block */
+					/* Offset the data block buffer past the IEEE header and description header. */
+					devc->buffer += devc->block_header_size;
+					len = devc->num_samples;
+				} else {
+					sr_dbg("Requesting: %li bytes.", devc->num_samples-devc->num_block_bytes);
+					len = sr_scpi_read_data(scpi, (char *)devc->buffer, devc->num_samples-devc->num_block_bytes);
+					if (len == -1) {
+						sr_err("Read error, aborting capture.");
+						packet.type = SR_DF_FRAME_END;
+						sr_session_send(sdi, &packet);
+						sdi->driver->dev_acquisition_stop(sdi);
+						return TRUE;
+					}
+					devc->num_block_read += 1;
+					devc->num_block_bytes += len;
+				}
+				sr_dbg("Received block: %i, %d bytes.", devc->num_block_read, len);
+				if (ch->type == SR_CHANNEL_ANALOG) {
+					float vdiv = devc->vdiv[ch->index];
+					float offset = devc->vert_offset[ch->index];
+					GArray *float_data;
+					static GArray *data;
+					float voltage, vdivlog;
+					int digits;
 
-	if (devc->channel_entry->next) {
-		/* We got the frame for this channel, now get the next channel. */
-		devc->channel_entry = devc->channel_entry->next;
-		siglent_sds_channel_start(sdi);
+					data = g_array_sized_new(FALSE, FALSE, sizeof(uint8_t), len);
+					g_array_append_vals(data, devc->buffer, len);
+					float_data = g_array_new(FALSE, FALSE, sizeof(float));
+					for (i = 0; i < len; i++) {
+						voltage = (float)g_array_index(data, int8_t, i) / 25;
+						voltage = ((vdiv * voltage) - offset);
+						g_array_append_val(float_data, voltage);
+					}
+					vdivlog = log10f(vdiv);
+					digits = -(int) vdivlog + (vdivlog < 0.0);
+					sr_analog_init(&analog, &encoding, &meaning, &spec, digits);
+					analog.meaning->channels = g_slist_append(NULL, ch);
+					analog.num_samples = float_data->len;
+					analog.data = (float *)float_data->data;
+					analog.meaning->mq = SR_MQ_VOLTAGE;
+					analog.meaning->unit = SR_UNIT_VOLT;
+					analog.meaning->mqflags = 0;
+					packet.type = SR_DF_ANALOG;
+					packet.payload = &analog;
+					sr_session_send(sdi, &packet);
+					g_slist_free(analog.meaning->channels);
+					g_array_free(data, TRUE);
+				}
+				len = 0;
+				if (devc->num_samples == (devc->num_block_bytes - SIGLENT_HEADER_SIZE)) {
+					sr_dbg("Transfer has been completed.");
+					devc->num_header_bytes = 0;
+					devc->num_block_bytes = 0;
+					read_complete = true;
+					if (!sr_scpi_read_complete(scpi)) {
+						sr_err("Read should have been completed.");
+						packet.type = SR_DF_FRAME_END;
+						sr_session_send(sdi, &packet);
+						sdi->driver->dev_acquisition_stop(sdi);
+						return TRUE;
+					}
+					devc->num_block_read = 0;
+				} else {
+					sr_dbg("%" PRIu64 " of %" PRIu64 " block bytes read.",
+						devc->num_block_bytes, devc->num_samples);
+				}
+			} while (!read_complete);
+			if (devc->channel_entry->next) {
+				/* We got the frame for this channel, now get the next channel. */
+				devc->channel_entry = devc->channel_entry->next;
+				siglent_sds_channel_start(sdi);
+			} else {
+				/* Done with this frame. */
+				packet.type = SR_DF_FRAME_END;
+				sr_session_send(sdi, &packet);
+				if (++devc->num_frames == devc->limit_frames) {
+					/* Last frame, stop capture. */
+					sdi->driver->dev_acquisition_stop(sdi);
+				} else {
+					/* Get the next frame, starting with the first channel. */
+					devc->channel_entry = devc->enabled_channels;
+					siglent_sds_capture_start(sdi);
+
+					/* Start of next frame. */
+					packet.type = SR_DF_FRAME_BEGIN;
+					sr_session_send(sdi, &packet);
+				}
+			}
+		}
 	} else {
-		/* Done with this frame. */
+		if(!siglent_sds_get_digital(sdi, ch))
+			return TRUE;
+		logic.length = devc->dig_buffer->len;
+		logic.unitsize = 2;
+		logic.data = devc->dig_buffer->data;
+		packet.type = SR_DF_LOGIC;
+		packet.payload = &logic;
+		sr_session_send(sdi, &packet);
 		packet.type = SR_DF_FRAME_END;
 		sr_session_send(sdi, &packet);
-
+		sdi->driver->dev_acquisition_stop(sdi);
 		if (++devc->num_frames == devc->limit_frames) {
 			/* Last frame, stop capture. */
 			sdi->driver->dev_acquisition_stop(sdi);
@@ -551,7 +682,10 @@ SR_PRIV int siglent_sds_receive(int fd, int revents, void *cb_data)
 			sr_session_send(sdi, &packet);
 		}
 	}
-
+	//sr_session_send(sdi, &packet);
+	//packet.type = SR_DF_FRAME_END;
+	//sr_session_send(sdi, &packet);
+	//sdi->driver->dev_acquisition_stop(sdi);
 	return TRUE;
 }
 
@@ -699,13 +833,15 @@ SR_PRIV int siglent_sds_get_dev_cfg(const struct sr_dev_inst *sdi)
 		return SR_ERR;
 	sr_dbg("Current trigger slope: %s.", devc->trigger_slope);
 
-	/* Trigger level. */
-	cmd = g_strdup_printf("%s:TRLV?", devc->trigger_source);
-	res = sr_scpi_get_float(sdi->conn, cmd, &devc->trigger_level);
-	g_free(cmd);
-	if (res != SR_OK)
-		return SR_ERR;
-	sr_dbg("Current trigger level: %g.", devc->trigger_level);
+	/* Trigger level, only when analog channel */
+	if(g_str_has_prefix(tokens[2], "C")){
+		cmd = g_strdup_printf("%s:TRLV?", devc->trigger_source);
+		res = sr_scpi_get_float(sdi->conn, cmd, &devc->trigger_level);
+		g_free(cmd);
+		if (res != SR_OK)
+			return SR_ERR;
+		sr_dbg("Current trigger level: %g.", devc->trigger_level);
+	}
 	return SR_OK;
 }
 
@@ -754,10 +890,11 @@ SR_PRIV int siglent_sds_get_dev_cfg_horizontal(const struct sr_dev_inst *sdi)
 	float samplerate_scope, fvalue;
 
 	devc = sdi->priv;
-	cmd = g_strdup_printf("SANU? C1");
+
 	switch (devc->model->series->protocol) {
 	case SPO_MODEL:
 	case NON_SPO_MODEL:
+		cmd = g_strdup_printf("SANU? C1");
 		res = sr_scpi_get_string(sdi->conn, cmd, &sample_points_string);
 		g_free(cmd);
 		samplerate_scope = 0;
@@ -782,12 +919,19 @@ SR_PRIV int siglent_sds_get_dev_cfg_horizontal(const struct sr_dev_inst *sdi)
 			samplerate_scope = fvalue;
 		}
 		g_free(sample_points_string);
-		devc->memory_depth = samplerate_scope;
+		devc->memory_depth_analog = samplerate_scope;
 		break;
 	case ESERIES:
+		cmd = g_strdup_printf("SANU? C1");
 		if (sr_scpi_get_float(sdi->conn, cmd, &fvalue) != SR_OK)
 			return SR_ERR;
-		devc->memory_depth = (long) fvalue;
+		devc->memory_depth_analog = (long) fvalue;
+		if(devc->la_enabled){
+			cmd = g_strdup_printf("SANU? D0");
+			if (sr_scpi_get_float(sdi->conn, cmd, &fvalue) != SR_OK)
+				return SR_ERR;
+			devc->memory_depth_digital = (long) fvalue;
+		}
 		break;
 	};
 	g_free(cmd);
@@ -797,8 +941,9 @@ SR_PRIV int siglent_sds_get_dev_cfg_horizontal(const struct sr_dev_inst *sdi)
 		return SR_ERR;
 
 	sr_dbg("Current timebase: %g.", devc->timebase);
-	devc->samplerate = devc->memory_depth / (devc->timebase * devc->model->series->num_horizontal_divs);
+	devc->samplerate = devc->memory_depth_analog / (devc->timebase * devc->model->series->num_horizontal_divs);
 	sr_dbg("Current samplerate: %0f.", devc->samplerate);
-	sr_dbg("Current memory depth: %lu.", devc->memory_depth);
+	sr_dbg("Current memory depth: %lu.", devc->memory_depth_analog);
 	return SR_OK;
 }
+
