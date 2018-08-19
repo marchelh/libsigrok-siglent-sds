@@ -41,9 +41,10 @@
 #define MAX_ANALOG_CHANNELS 4
 #define MAX_DIGITAL_CHANNELS 16
 
-#define DEVICE_STATE_STOPPED 0		/* Scope is in stopped state */
-#define DEVICE_STATE_DATA_ACQ 1		/* A new signal has been acquired */
-#define DEVICE_STATE_TRIG_RDY 8192	/* Trigger is ready */
+#define DEVICE_STATE_STOPPED 0		/* Scope is in stopped state bit*/
+#define DEVICE_STATE_DATA_ACQ 1		/* A new signal has been acquired bit*/
+#define DEVICE_STATE_TRIG_RDY 8192		/* Trigger is ready bit*/
+#define DEVICE_STATE_DATA_TRIG_RDY 8193		/* Trigger is ready bit*/
 
 enum protocol_version {
 	SPO_MODEL,

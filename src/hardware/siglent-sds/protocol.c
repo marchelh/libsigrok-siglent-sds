@@ -109,8 +109,8 @@ static int siglent_sds_event_wait(const struct sr_dev_inst *sdi)
 		 * not taking effect? Was some different condition meant
 		 * to get encoded? This needs review, and adjustment.
 		 */
-		} while ((out | DEVICE_STATE_TRIG_RDY && out | DEVICE_STATE_DATA_ACQ) && out | DEVICE_STATE_STOPPED);
-		sr_dbg("Device triggerd 2.");
+		} while (out != DEVICE_STATE_TRIG_RDY || out != DEVICE_STATE_DATA_TRIG_RDY || out != DEVICE_STATE_STOPPED);
+		sr_dbg("Device triggerd");
 		siglent_sds_set_wait_event(devc, WAIT_NONE);
 	}
 
@@ -163,12 +163,12 @@ SR_PRIV int siglent_sds_capture_start(const struct sr_dev_inst *sdi)
 				devc->num_frames + 1, devc->limit_frames);
 			if (siglent_sds_config_set(sdi, "ARM") != SR_OK)
 				return SR_ERR;
-			if (sr_scpi_get_string(sdi->conn, ":INR?", &buf) != SR_OK)
+			if (sr_scpi_get_string(sdi->conn,":INR?", &buf) != SR_OK)
 				return SR_ERR;
 			sr_atoi(buf, &out);
 			if (out == DEVICE_STATE_TRIG_RDY) {
 				siglent_sds_set_wait_event(devc, WAIT_TRIGGER);
-			} else if (out == DEVICE_STATE_TRIG_RDY + 1) {
+			} else if (out == DEVICE_STATE_DATA_TRIG_RDY) {
 				sr_spew("Device triggered.");
 				siglent_sds_set_wait_event(devc, WAIT_BLOCK);
 				return SR_OK;
@@ -217,7 +217,7 @@ SR_PRIV int siglent_sds_capture_start(const struct sr_dev_inst *sdi)
 			sr_atoi(buf, &out);
 			if (out == DEVICE_STATE_TRIG_RDY) {
 				siglent_sds_set_wait_event(devc, WAIT_TRIGGER);
-			} else if (out == DEVICE_STATE_TRIG_RDY + 1) {
+			} else if (out == DEVICE_STATE_DATA_TRIG_RDY) {
 				sr_spew("Device triggered.");
 				siglent_sds_set_wait_event(devc, WAIT_BLOCK);
 				return SR_OK;
