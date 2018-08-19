@@ -33,7 +33,6 @@
 #include <string.h>
 #include <strings.h>
 #include <errno.h>
-#include <stdbool.h>
 #include <libsigrok/libsigrok.h>
 #include "libsigrok-internal.h"
 
@@ -614,27 +613,49 @@ SR_API int sr_parse_rational(const char *str, struct sr_rational *ret)
 	int64_t denominator = 1;
 	int32_t fractional_len = 0;
 	int32_t exponent = 0;
-	bool is_negative = false;
+	gboolean is_negative = FALSE;
+	gboolean no_integer, no_fractional;
+
+	while (isspace(*str))
+		str++;
 
 	errno = 0;
 	integral = g_ascii_strtoll(str, &endptr, 10);
 
-	if (str == endptr && (str[0] == '-' || str[0] == '+') && str[1] == '.')
+	if (str == endptr && (str[0] == '-' || str[0] == '+') && str[1] == '.') {
 		endptr += 1;
-	else if (errno)
+		no_integer = TRUE;
+	} else if (str == endptr && str[0] == '.') {
+		no_integer = TRUE;
+	} else if (errno) {
 		return SR_ERR;
+	} else {
+		no_integer = FALSE;
+	}
 
 	if (integral < 0 || str[0] == '-')
-		is_negative = true;
+		is_negative = TRUE;
 
+	errno = 0;
 	if (*endptr == '.') {
-		const char* start = endptr + 1;
+		gboolean is_exp, is_eos;
+		const char *start = endptr + 1;
 		fractional = g_ascii_strtoll(start, &endptr, 10);
+		is_exp = *endptr == 'E' || *endptr == 'e';
+		is_eos = *endptr == '\0';
+		if (endptr == start && (is_exp || is_eos)) {
+			fractional = 0;
+			errno = 0;
+		}
 		if (errno)
+			return SR_ERR;
+		no_fractional = endptr == start;
+		if (no_integer && no_fractional)
 			return SR_ERR;
 		fractional_len = endptr - start;
 	}
 
+	errno = 0;
 	if ((*endptr == 'E') || (*endptr == 'e')) {
 		exponent = g_ascii_strtoll(endptr + 1, &endptr, 10);
 		if (errno)

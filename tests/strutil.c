@@ -19,6 +19,7 @@
 
 #include <config.h>
 #include <check.h>
+#include <errno.h>
 #include <locale.h>
 #include <libsigrok/libsigrok.h>
 #include "lib.h"
@@ -117,10 +118,20 @@ static void test_rational(const char *input, struct sr_rational expected)
 	struct sr_rational rational;
 
 	ret = sr_parse_rational(input, &rational);
-	fail_unless(ret == SR_OK);
+	fail_unless(ret == SR_OK, "Unexpected rc for '%s': %d, errno %d.",
+		input, ret, errno);
 	fail_unless((expected.p == rational.p) && (expected.q == rational.q),
 		    "Invalid result for '%s': %ld/%ld'.",
 		    input, rational.p, rational.q);
+}
+
+static void test_rational_fail(const char *input)
+{
+	int ret;
+	struct sr_rational rational;
+
+	ret = sr_parse_rational(input, &rational);
+	fail_unless(ret != SR_OK, "Unexpected success for '%s'.", input);
 }
 
 static void test_voltage(uint64_t v_p, uint64_t v_q, const char *expected)
@@ -386,6 +397,16 @@ START_TEST(test_fractional)
 	test_rational("+.1", (struct sr_rational){1, 10});
 	test_rational("-0.1", (struct sr_rational){-1, 10});
 	test_rational("-.1", (struct sr_rational){-1, 10});
+	test_rational(".1", (struct sr_rational){1, 10});
+	test_rational(".123", (struct sr_rational){123, 1000});
+	test_rational("1.", (struct sr_rational){1, 1});
+	test_rational("123.", (struct sr_rational){123, 1});
+	test_rational("-.1", (struct sr_rational){-1, 10});
+	test_rational(" .1", (struct sr_rational){1, 10});
+	test_rational("+.1", (struct sr_rational){1, 10});
+	test_rational_fail(".");
+	test_rational_fail(".e");
+	test_rational_fail(".e1");
 }
 END_TEST
 
