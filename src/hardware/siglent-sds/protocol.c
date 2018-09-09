@@ -362,6 +362,7 @@ static int siglent_sds_get_digital(const struct sr_dev_inst *sdi, struct sr_chan
 	int channel_index;
 	long samples_index;
 
+	len = 0;
 	channel_index = 0;
 	low_channels = FALSE;
 	high_channels = FALSE;
@@ -434,6 +435,8 @@ static int siglent_sds_get_digital(const struct sr_dev_inst *sdi, struct sr_chan
 						g_array_append_val(data_high_channels,value);
 					}
 				}
+				g_array_free(tmp_samplebuf, TRUE);
+				g_array_free(buffdata, TRUE);
 			}
 		}
 	}
@@ -459,8 +462,6 @@ static int siglent_sds_get_digital(const struct sr_dev_inst *sdi, struct sr_chan
 	}
 	g_array_free(data_low_channels, TRUE);
 	g_array_free(data_high_channels, TRUE);
-	g_array_free(buffdata, TRUE);
-	g_array_free(tmp_samplebuf, TRUE);
 	return len;
 }
 
@@ -932,9 +933,10 @@ SR_PRIV int siglent_sds_get_dev_cfg_horizontal(const struct sr_dev_inst *sdi)
 				return SR_ERR;
 			devc->memory_depth_digital = (long) fvalue;
 		}
+		g_free(cmd);
 		break;
 	};
-	g_free(cmd);
+	
 
 	/* Get the timebase. */
 	if (sr_scpi_get_float(sdi->conn, ":TDIV?", &devc->timebase) != SR_OK)
