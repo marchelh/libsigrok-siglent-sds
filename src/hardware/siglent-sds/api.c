@@ -192,7 +192,7 @@ static const struct siglent_sds_series supported_series[] = {
 		{ 50, 1 }, { 500, 100000 }, 14, 8, 14000363},
 	[SDS1000XP] = {VENDOR(SIGLENT), "SDS1000X+", SPO_MODEL,
 		{ 50, 1 }, { 500, 100000 }, 14, 8, 14000363},
-	[SDS1000XE] = {VENDOR(SIGLENT), "SDS1000XE", ESERIES,
+		[SDS1000XE] = {VENDOR(SIGLENT), "SDS1000XE", ESERIES,
 		{ 50, 1 }, { 500, 100000 }, 14, 8, 14000363},
 	[SDS2000X] = {VENDOR(SIGLENT), "SDS2000X", SPO_MODEL,
 		{ 50, 1 }, { 500, 100000 }, 14, 8, 14000363},
@@ -776,6 +776,9 @@ static int config_list(uint32_t key, GVariant **data,
 			*data = g_variant_new_strv(data_sources, ARRAY_SIZE(data_sources) - 1);
 			break;
 		case SPO_MODEL:
+		case ESERIES:
+			*data = g_variant_new_strv(ARRAY_AND_SIZE(data_sources));
+			break;
 		case ESERIES:
 			*data = g_variant_new_strv(ARRAY_AND_SIZE(data_sources));
 			break;
